@@ -36,6 +36,7 @@ class ArchitectureTool(BaseTool):
         question: str,
         use_backup: bool = False,
         save_to_db: bool = True,
+        parent_id: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -45,6 +46,7 @@ class ArchitectureTool(BaseTool):
             question: Question about system design, architecture, flows, etc.
             use_backup: Whether to use backup model. Default: False
             save_to_db: Whether to save response to MongoDB. Default: True
+            parent_id: Optional parent document ID for follow-up questions
             **kwargs: Additional parameters (ignored)
             
         Returns:
@@ -96,7 +98,8 @@ Focus on high-level design, patterns, and architectural principles."""
                 question=question,
                 markdown_content=markdown_content,
                 model_used=model,
-                complexity_score=complexity_score
+                complexity_score=complexity_score,
+                parent_id=parent_id
             )
         
         return markdown_content

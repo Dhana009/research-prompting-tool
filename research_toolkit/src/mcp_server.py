@@ -26,6 +26,7 @@ from src.tools.coding_research import CodingResearchTool
 from src.tools.debugging import DebuggingTool
 from src.tools.architecture import ArchitectureTool
 from src.tools.general_purpose import GeneralPurposeTool
+from src.router.model_router import get_model_for_tool
 
 
 # MongoDB instance management
@@ -35,6 +36,19 @@ _active_mongodb_instance: Optional[str] = None
 # Initialize clients (will be created on first use)
 _api_client: Optional[RouteLLMClient] = None
 _db_client: Optional[MongoDBClient] = None
+
+
+# Follow-up memory layer
+class FollowUpMemory:
+    """Simple in-memory store for last document_id and conversation_id."""
+    
+    def __init__(self):
+        self.last_document_id: Optional[str] = None
+        self.last_conversation_id: Optional[str] = None
+
+
+# Global memory instance
+_followup_memory = FollowUpMemory()
 
 
 def load_mongodb_instances():
@@ -111,6 +125,34 @@ def get_clients():
     return _api_client, _db_client
 
 
+def _update_followup_memory(db_client: MongoDBClient) -> None:
+    """Update follow-up memory with the last saved document."""
+    global _followup_memory
+    
+    try:
+        if not db_client._connected or db_client.collection is None:
+            return
+        
+        # Get the most recent document (by _id descending)
+        last_doc = db_client.collection.find_one(
+            {},
+            sort=[("_id", -1)]
+        )
+        
+        if last_doc:
+            # Try to get document_id (new format) or question_id (old format)
+            doc_id = last_doc.get("document_id") or last_doc.get("question_id")
+            conv_id = last_doc.get("conversation_id")
+            
+            if doc_id:
+                _followup_memory.last_document_id = doc_id
+            if conv_id:
+                _followup_memory.last_conversation_id = conv_id
+    except Exception:
+        # Silently fail - memory update is not critical
+        pass
+
+
 def switch_mongodb_instance(instance_name: str) -> Dict[str, Any]:
     """Switch to a different MongoDB instance."""
     global _db_client, _active_mongodb_instance, _mongodb_instances
@@ -170,6 +212,19 @@ def list_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "default": True,
                         "description": "Save response to MongoDB"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Optional parent document ID for follow-up questions"
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, automatically links to the previous document in the conversation"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name that will be used (auto-determined from complexity). Shows which model is selected for this query."
                     }
                 },
                 "required": ["question"]
@@ -195,6 +250,19 @@ def list_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "default": True,
                         "description": "Save response to MongoDB"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Optional parent document ID for follow-up questions"
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, automatically links to the previous document in the conversation"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name that will be used (auto-determined from complexity). Shows which model is selected for this query."
                     }
                 },
                 "required": ["question"]
@@ -228,6 +296,19 @@ def list_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "default": True,
                         "description": "Save response to MongoDB"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Optional parent document ID for follow-up questions"
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, automatically links to the previous document in the conversation"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name that will be used (auto-determined from tier). Shows which model is selected for this query."
                     }
                 },
                 "required": ["code", "explanation"]
@@ -252,6 +333,19 @@ def list_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "default": True,
                         "description": "Save response to MongoDB"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Optional parent document ID for follow-up questions"
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, automatically links to the previous document in the conversation"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name that will be used (auto-determined from use_backup). Shows which model is selected for this query."
                     }
                 },
                 "required": ["question"]
@@ -277,6 +371,19 @@ def list_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "default": True,
                         "description": "Save response to MongoDB"
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Optional parent document ID for follow-up questions"
+                    },
+                    "follow_up": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, automatically links to the previous document in the conversation"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model name that will be used (auto-determined from complexity). Shows which model is selected for this query."
                     }
                 },
                 "required": ["question"]
@@ -400,86 +507,147 @@ def call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         # Research tools
         api_client, db_client = get_clients()
         
+        # Handle follow_up flag for all research tools
+        follow_up = arguments.get("follow_up", False)
+        parent_id = arguments.get("parent_id")
+        
+        # If parent_id not explicitly provided, and follow_up=True with memory, use memory
+        # Explicit parent_id takes precedence over follow_up memory
+        if parent_id is None and follow_up and _followup_memory.last_document_id and _followup_memory.last_conversation_id:
+            parent_id = _followup_memory.last_document_id
+        
         if name == "topic_research":
+            # Calculate model before execution
+            complexity = arguments.get("complexity", "simple")
+            use_backup = arguments.get("use_backup", False)
+            if complexity == "large":
+                model = get_model_for_tool("topic_research", complexity="large")
+            elif use_backup:
+                model = get_model_for_tool("topic_research", complexity="simple", use_backup=True)
+            else:
+                model = get_model_for_tool("topic_research", complexity="simple")
+            
             tool = TopicResearchTool(api_client, db_client)
             result = tool.execute(
                 question=arguments["question"],
-                complexity=arguments.get("complexity", "simple"),
-                use_backup=arguments.get("use_backup", False),
-                save_to_db=arguments.get("save_to_db", True)
+                complexity=complexity,
+                use_backup=use_backup,
+                save_to_db=arguments.get("save_to_db", True),
+                parent_id=parent_id
             )
+            
+            # Update memory after save if save_to_db was True
+            if arguments.get("save_to_db", True):
+                _update_followup_memory(db_client)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": result
+                        "text": f"**Model Used:** {model}\n\n{result}"
                     }
                 ]
             }
         
         elif name == "coding_research":
+            # Calculate model before execution
+            complexity = arguments.get("complexity", "simple")
+            router_complexity = complexity if complexity in ["simple", "moderate", "deep"] else "simple"
+            model = get_model_for_tool("coding_research", complexity=router_complexity)
+            
             tool = CodingResearchTool(api_client, db_client)
             result = tool.execute(
                 question=arguments["question"],
-                complexity=arguments.get("complexity", "simple"),
-                save_to_db=arguments.get("save_to_db", True)
+                complexity=complexity,
+                save_to_db=arguments.get("save_to_db", True),
+                parent_id=parent_id
             )
+            
+            # Update memory after save if save_to_db was True
+            if arguments.get("save_to_db", True):
+                _update_followup_memory(db_client)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": result
+                        "text": f"**Model Used:** {model}\n\n{result}"
                     }
                 ]
             }
         
         elif name == "debugging":
+            # Calculate model before execution
+            tier = arguments.get("tier", 1)
+            model = get_model_for_tool("debugging", tier=tier)
+            
             tool = DebuggingTool(api_client, db_client)
             # Combine code and explanation
             question = f"Code:\n{arguments['code']}\n\nExplanation:\n{arguments['explanation']}"
             result = tool.execute(
                 question=question,
-                tier=arguments.get("tier", 1),
+                tier=tier,
                 user_feedback=arguments.get("user_feedback"),
-                save_to_db=arguments.get("save_to_db", True)
+                save_to_db=arguments.get("save_to_db", True),
+                parent_id=parent_id
             )
+            
+            # Update memory after save if save_to_db was True
+            if arguments.get("save_to_db", True):
+                _update_followup_memory(db_client)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": result
+                        "text": f"**Model Used:** {model}\n\n{result}"
                     }
                 ]
             }
         
         elif name == "architecture":
+            # Calculate model before execution
+            use_backup = arguments.get("use_backup", False)
+            model = get_model_for_tool("architecture", use_backup=use_backup)
+            
             tool = ArchitectureTool(api_client, db_client)
             result = tool.execute(
                 question=arguments["question"],
-                use_backup=arguments.get("use_backup", False),
-                save_to_db=arguments.get("save_to_db", True)
+                use_backup=use_backup,
+                save_to_db=arguments.get("save_to_db", True),
+                parent_id=parent_id
             )
+            
+            # Update memory after save if save_to_db was True
+            if arguments.get("save_to_db", True):
+                _update_followup_memory(db_client)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": result
+                        "text": f"**Model Used:** {model}\n\n{result}"
                     }
                 ]
             }
         
         elif name == "general_purpose":
+            # Calculate model before execution
+            complexity = arguments.get("complexity", "simple")
+            model = get_model_for_tool("general", complexity=complexity)
+            
             tool = GeneralPurposeTool(api_client, db_client)
             result = tool.execute(
                 question=arguments["question"],
-                complexity=arguments.get("complexity", "simple"),
-                save_to_db=arguments.get("save_to_db", True)
+                complexity=complexity,
+                save_to_db=arguments.get("save_to_db", True),
+                parent_id=parent_id
             )
+            
+            # Update memory after save if save_to_db was True
+            if arguments.get("save_to_db", True):
+                _update_followup_memory(db_client)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": result
+                        "text": f"**Model Used:** {model}\n\n{result}"
                     }
                 ]
             }

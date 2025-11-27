@@ -38,6 +38,7 @@ class TopicResearchTool(BaseTool):
         complexity: str = "simple",
         use_backup: bool = False,
         save_to_db: bool = True,
+        parent_id: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -48,6 +49,7 @@ class TopicResearchTool(BaseTool):
             complexity: Complexity level (simple, large). Default: simple
             use_backup: Whether to use backup model. Default: False
             save_to_db: Whether to save response to MongoDB. Default: True
+            parent_id: Optional parent document ID for follow-up questions
             **kwargs: Additional parameters (ignored)
             
         Returns:
@@ -101,7 +103,8 @@ Focus on understanding and explanation, not implementation details."""
                 question=question,
                 markdown_content=markdown_content,
                 model_used=model,
-                complexity_score=complexity_score
+                complexity_score=complexity_score,
+                parent_id=parent_id
             )
         
         return markdown_content

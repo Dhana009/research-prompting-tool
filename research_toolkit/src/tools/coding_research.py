@@ -37,6 +37,7 @@ class CodingResearchTool(BaseTool):
         question: str,
         complexity: str = "simple",
         save_to_db: bool = True,
+        parent_id: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -46,6 +47,7 @@ class CodingResearchTool(BaseTool):
             question: Research question about coding patterns, best practices, etc.
             complexity: Complexity level (simple, moderate, deep). Default: simple
             save_to_db: Whether to save response to MongoDB. Default: True
+            parent_id: Optional parent document ID for follow-up questions
             **kwargs: Additional parameters (ignored)
             
         Returns:
@@ -103,7 +105,8 @@ Focus on code quality, maintainability, and best practices."""
                 question=question,
                 markdown_content=markdown_content,
                 model_used=model,
-                complexity_score=complexity_score
+                complexity_score=complexity_score,
+                parent_id=parent_id
             )
         
         return markdown_content

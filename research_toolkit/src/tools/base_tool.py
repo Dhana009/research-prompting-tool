@@ -13,6 +13,7 @@ from src.models.question import generate_question_id
 from src.models.document import ResearchDocument, Category
 from src.storage.mongodb import MongoDBClient
 from src.utils.api_client import RouteLLMClient
+from src.utils.document_orchestrator import DocumentOrchestrator
 
 
 class BaseTool(ABC):
@@ -199,10 +200,11 @@ class BaseTool(ABC):
         markdown_content: str,
         model_used: str,
         complexity_score: int,
-        sub_category: Optional[str] = None
+        sub_category: Optional[str] = None,
+        parent_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Save research response to MongoDB.
+        Save research response to MongoDB using DocumentOrchestrator.
         
         Args:
             question: User's question
@@ -210,11 +212,22 @@ class BaseTool(ABC):
             model_used: Model name used
             complexity_score: Complexity score (1-10)
             sub_category: Optional sub-category
+            parent_id: Optional parent document ID for follow-up questions
             
         Returns:
             MongoDB insert result dictionary
         """
-        document = self._create_document(
+        # Ensure db_client is connected
+        if not self.db_client._connected:
+            self.db_client.connect()
+        
+        # Get mongo_client, database_name, and collection_name from db_client
+        mongo_client = self.db_client.client
+        database_name = self.db_client.db.name
+        collection_name = self.db_client.collection.name
+        
+        # Create old document structure for backward compatibility
+        old_document = self._create_document(
             question=question,
             markdown_content=markdown_content,
             model_used=model_used,
@@ -222,11 +235,26 @@ class BaseTool(ABC):
             sub_category=sub_category
         )
         
-        # Convert Pydantic model to dict for MongoDB
-        doc_dict = document.model_dump()
+        # Convert to dict and exclude question/markdown_content (handled by orchestrator)
+        additional_fields = old_document.model_dump()
+        # Remove question and markdown_content to avoid duplication
+        additional_fields.pop("question", None)
+        additional_fields.pop("markdown_content", None)
+        # Keep question_id as additional field (backward compatibility)
+        # document_id will be added by DocumentAssembler (new format)
         
-        # Insert into MongoDB
-        result = self.db_client.insert_one(doc_dict)
+        # Use DocumentOrchestrator to save with proper metadata
+        result = DocumentOrchestrator.save_document(
+            question=question,
+            markdown_content=markdown_content,
+            parent_id=parent_id,
+            mongo_client=mongo_client,
+            database_name=database_name,
+            collection_name=collection_name,
+            additional_fields=additional_fields,
+            tool_prefix=self._tool_prefix
+        )
+        
         return result
     
     @abstractmethod

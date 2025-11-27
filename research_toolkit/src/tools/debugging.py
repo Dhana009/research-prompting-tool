@@ -143,6 +143,7 @@ Focus on understanding the problem, not fixing it."""
         tier: int = 1,
         user_feedback: Optional[str] = None,
         save_to_db: bool = True,
+        parent_id: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -153,6 +154,7 @@ Focus on understanding the problem, not fixing it."""
             tier: Tier level (1, 2, or 3). Default: 1
             user_feedback: Optional user feedback for escalation. Default: None
             save_to_db: Whether to save response to MongoDB. Default: True
+            parent_id: Optional parent document ID for follow-up questions
             **kwargs: Additional parameters (ignored)
             
         Returns:
@@ -214,7 +216,8 @@ Focus on understanding the problem, not fixing it."""
                 question=tier_question,
                 markdown_content=markdown_content,
                 model_used=model,
-                complexity_score=complexity_score
+                complexity_score=complexity_score,
+                parent_id=parent_id
             )
         
         return markdown_content

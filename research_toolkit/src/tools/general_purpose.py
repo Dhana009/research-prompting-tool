@@ -36,6 +36,7 @@ class GeneralPurposeTool(BaseTool):
         question: str,
         complexity: str = "simple",
         save_to_db: bool = True,
+        parent_id: Optional[str] = None,
         **kwargs
     ) -> str:
         """
@@ -45,6 +46,7 @@ class GeneralPurposeTool(BaseTool):
             question: General question that doesn't fit other categories
             complexity: Complexity level (simple, medium). Default: simple
             save_to_db: Whether to save response to MongoDB. Default: True
+            parent_id: Optional parent document ID for follow-up questions
             **kwargs: Additional parameters (ignored)
             
         Returns:
@@ -94,7 +96,8 @@ Adapt your response style to the type of question asked."""
                 question=question,
                 markdown_content=markdown_content,
                 model_used=model,
-                complexity_score=complexity_score
+                complexity_score=complexity_score,
+                parent_id=parent_id
             )
         
         return markdown_content
